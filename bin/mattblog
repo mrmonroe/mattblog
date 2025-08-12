@@ -71,6 +71,31 @@ function logWarning(message) {
   console.log(colorize(`⚠️  ${message}`, 'yellow'));
 }
 
+// Wait for user input after commands
+function waitForInput(callback = null) {
+  log('\n' + '─'.repeat(50), 'cyan');
+  log('Press any key to continue, Q to quit, or L for command list', 'cyan');
+  
+  rl.question('> ', (input) => {
+    const command = input.trim().toLowerCase();
+    
+    if (command === 'q' || command === 'quit') {
+      log('\n👋 Goodbye!', 'green');
+      rl.close();
+      process.exit(0);
+    } else if (command === 'l' || command === 'list') {
+      showHelp();
+      waitForInput(callback);
+    } else {
+      if (callback) {
+        callback();
+      } else {
+        showMainMenu();
+      }
+    }
+  });
+}
+
 // File operations
 function ensurePostsDirectory() {
   if (!fs.existsSync(POSTS_DIR)) {
@@ -186,7 +211,7 @@ function addEditorialItem() {
   rl.question('Title: ', (title) => {
     if (!title.trim()) {
       logError('Title is required');
-      rl.close();
+      waitForInput(() => showEditorialMenu());
       return;
     }
     
@@ -239,7 +264,7 @@ function createEditorialItem(title, category, targetDate, priority, notes, templ
     }
   }
   
-  rl.close();
+  waitForInput(() => showEditorialMenu());
 }
 
 function listEditorialItems() {
@@ -247,6 +272,7 @@ function listEditorialItems() {
   
   if (items.length === 0) {
     logInfo('No editorial items found');
+    waitForInput(() => showEditorialMenu());
     return;
   }
   
@@ -278,6 +304,8 @@ function listEditorialItems() {
     if (item.notes) log(`   Notes: ${item.notes}`);
     log(`   Created: ${new Date(item.createdAt).toLocaleDateString()}`);
   });
+  
+  waitForInput(() => showEditorialMenu());
 }
 
 function updateItemStatus() {
@@ -285,6 +313,7 @@ function updateItemStatus() {
   
   if (items.length === 0) {
     logInfo('No editorial items to update');
+    waitForInput(() => showEditorialMenu());
     return;
   }
   
@@ -295,7 +324,7 @@ function updateItemStatus() {
     
     if (index < 0 || index >= items.length) {
       logError('Invalid item number');
-      rl.close();
+      waitForInput(() => showEditorialMenu());
       return;
     }
     
@@ -316,7 +345,7 @@ function updateItemStatus() {
       } else {
         logError('Invalid status');
       }
-      rl.close();
+      waitForInput(() => showEditorialMenu());
     });
   });
 }
@@ -326,6 +355,7 @@ function deleteEditorialItem() {
   
   if (items.length === 0) {
     logInfo('No editorial items to delete');
+    waitForInput(() => showEditorialMenu());
     return;
   }
   
@@ -336,7 +366,7 @@ function deleteEditorialItem() {
     
     if (index < 0 || index >= items.length) {
       logError('Invalid item number');
-      rl.close();
+      waitForInput(() => showEditorialMenu());
       return;
     }
     
@@ -352,7 +382,7 @@ function deleteEditorialItem() {
       } else {
         logInfo('Deletion cancelled');
       }
-      rl.close();
+      waitForInput(() => showEditorialMenu());
     });
   });
 }
@@ -363,6 +393,7 @@ function createPostFromEditorial() {
   
   if (items.length === 0) {
     logInfo('No editorial items found');
+    waitForInput(() => showEditorialMenu());
     return;
   }
   
@@ -378,6 +409,7 @@ function createPostFromEditorial() {
   
   if (eligibleItems.length === 0) {
     logInfo('No editorial items ready for blog post creation');
+    waitForInput(() => showEditorialMenu());
     return;
   }
   
@@ -395,7 +427,7 @@ function createPostFromEditorial() {
     
     if (index < 0 || index >= eligibleItems.length) {
       logError('Invalid item number');
-      rl.close();
+      waitForInput(() => showEditorialMenu());
       return;
     }
     
@@ -490,7 +522,7 @@ function continuePostCreationFromEditorial(item, templateName) {
             
             if (fs.existsSync(filePath)) {
               logError(`Post with slug "${slug}" already exists`);
-              rl.close();
+              waitForInput(() => showEditorialMenu());
               return;
             }
             
@@ -515,7 +547,7 @@ function continuePostCreationFromEditorial(item, templateName) {
             
             logInfo(`Blog post created from editorial item: ${item.title}`);
             
-            rl.close();
+            waitForInput(() => showEditorialMenu());
           });
         });
       });
@@ -574,6 +606,8 @@ function showStats() {
       log(`   ${post.title} (${post.date})`);
     });
   }
+  
+  waitForInput(() => showMainMenu());
 }
 
 function createPost() {
@@ -609,7 +643,7 @@ function continuePostCreation(templateName) {
   rl.question('Title: ', (title) => {
     if (!title.trim()) {
       logError('Title is required');
-      rl.close();
+      waitForInput(() => showPostMenu());
       return;
     }
     
@@ -651,7 +685,7 @@ function continuePostCreation(templateName) {
             
             if (fs.existsSync(filePath)) {
               logError(`Post with slug "${slug}" already exists`);
-              rl.close();
+              waitForInput(() => showPostMenu());
               return;
             }
             
@@ -668,7 +702,7 @@ function continuePostCreation(templateName) {
               logInfo('Post is marked as draft and will not appear on the blog');
             }
             
-            rl.close();
+            waitForInput(() => showPostMenu());
           });
         });
       });
@@ -706,6 +740,7 @@ function listPosts() {
   
   if (posts.length === 0) {
     logInfo('No blog posts found');
+    waitForInput(() => showPostMenu());
     return;
   }
   
@@ -721,6 +756,8 @@ function listPosts() {
     log(`   Author: ${post.author}`);
     if (post.excerpt) log(`   Excerpt: ${post.excerpt}`);
   });
+  
+  waitForInput(() => showPostMenu());
 }
 
 function togglePostStatus() {
@@ -728,6 +765,7 @@ function togglePostStatus() {
   
   if (posts.length === 0) {
     logInfo('No blog posts to update');
+    waitForInput(() => showPostMenu());
     return;
   }
   
@@ -738,7 +776,7 @@ function togglePostStatus() {
     
     if (index < 0 || index >= posts.length) {
       logError('Invalid post number');
-      rl.close();
+      waitForInput(() => showPostMenu());
       return;
     }
     
@@ -762,7 +800,7 @@ function togglePostStatus() {
       logError(`Failed to update post: ${error.message}`);
     }
     
-    rl.close();
+    waitForInput(() => showPostMenu());
   });
 }
 
@@ -797,6 +835,10 @@ function showHelp() {
   log('  - Run without arguments for interactive mode');
   log('  - Use templates for consistent post structure');
   log('  - Convert editorial items to blog posts seamlessly');
+  log('  - After each command, press any key to continue');
+  log('  - Use Q to quit or L to list commands');
+  
+  waitForInput(() => showMainMenu());
 }
 
 function showMainMenu() {
@@ -819,15 +861,13 @@ function showMainMenu() {
         break;
       case '3':
         showStats();
-        showMainMenu();
         break;
       case '4':
         listTemplates();
-        showMainMenu();
+        waitForInput(() => showMainMenu());
         break;
       case '5':
         showHelp();
-        showMainMenu();
         break;
       case '6':
         log('\n👋 Goodbye!', 'green');
@@ -857,7 +897,6 @@ function showEditorialMenu() {
         break;
       case '2':
         listEditorialItems();
-        showEditorialMenu();
         break;
       case '3':
         updateItemStatus();
@@ -893,7 +932,6 @@ function showPostMenu() {
         break;
       case '2':
         listPosts();
-        showPostMenu();
         break;
       case '3':
         togglePostStatus();
@@ -951,6 +989,7 @@ function handleCommandLineArgs() {
       break;
     case 'templates':
       listTemplates();
+      waitForInput(() => process.exit(0));
       break;
     case 'help':
       showHelp();
@@ -958,7 +997,7 @@ function handleCommandLineArgs() {
     default:
       logError(`Unknown command: ${command}`);
       logInfo('Use "help" to see available commands');
-      process.exit(1);
+      waitForInput(() => process.exit(1));
   }
 }
 
