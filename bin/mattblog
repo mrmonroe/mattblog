@@ -29,9 +29,9 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-// Editorial item structure
+// Enhanced Editorial item structure
 class EditorialItem {
-  constructor(title, category = '', targetDate = '', priority = 'medium', notes = '') {
+  constructor(title, category = '', targetDate = '', priority = 'medium', notes = '', template = '') {
     this.id = Date.now().toString();
     this.title = title;
     this.status = 'idea';
@@ -40,6 +40,7 @@ class EditorialItem {
     this.category = category;
     this.notes = notes;
     this.priority = priority;
+    this.template = template; // New field for template selection
     this.createdAt = new Date().toISOString();
     this.updatedAt = new Date().toISOString();
   }
@@ -193,27 +194,52 @@ function addEditorialItem() {
       rl.question('Target Date (YYYY-MM-DD, optional): ', (targetDate) => {
         rl.question('Priority (low/medium/high, default: medium): ', (priority) => {
           rl.question('Notes (optional): ', (notes) => {
-            const item = new EditorialItem(
-              title.trim(),
-              category.trim(),
-              targetDate.trim() || '',
-              priority.trim() || 'medium',
-              notes.trim()
-            );
+            // Show available templates for selection
+            const templates = getAvailableTemplates();
+            let templateChoice = '';
             
-            const items = loadEditorialItems();
-            items.push(item);
-            
-            if (saveEditorialItems(items)) {
-              logSuccess(`Added: ${item.title}`);
+            if (templates.length > 0) {
+              log('\n📝 Available Templates:');
+              templates.forEach((template, index) => {
+                log(`   ${index + 1}. ${template}`);
+              });
+              log('   (Press Enter to skip template selection)');
+              
+              rl.question('Select template number (optional): ', (templateNum) => {
+                if (templateNum.trim() && !isNaN(templateNum)) {
+                  const index = parseInt(templateNum) - 1;
+                  if (index >= 0 && index < templates.length) {
+                    templateChoice = templates[index];
+                    logInfo(`Selected template: ${templateChoice}`);
+                  }
+                }
+                
+                createEditorialItem(title.trim(), category.trim(), targetDate.trim() || '', priority.trim() || 'medium', notes.trim(), templateChoice);
+              });
+            } else {
+              createEditorialItem(title.trim(), category.trim(), targetDate.trim() || '', priority.trim() || 'medium', notes.trim(), '');
             }
-            
-            rl.close();
           });
         });
       });
     });
   });
+}
+
+function createEditorialItem(title, category, targetDate, priority, notes, template) {
+  const item = new EditorialItem(title, category, targetDate, priority, notes, template);
+  
+  const items = loadEditorialItems();
+  items.push(item);
+  
+  if (saveEditorialItems(items)) {
+    logSuccess(`Added: ${item.title}`);
+    if (template) {
+      logInfo(`Template: ${template}`);
+    }
+  }
+  
+  rl.close();
 }
 
 function listEditorialItems() {
@@ -248,6 +274,7 @@ function listEditorialItems() {
     log(`   Priority: ${colorize(item.priority, priorityColors[item.priority])}`);
     if (item.category) log(`   Category: ${item.category}`);
     if (item.targetDate) log(`   Target: ${item.targetDate}`);
+    if (item.template) log(`   Template: ${colorize(item.template, 'cyan')}`);
     if (item.notes) log(`   Notes: ${item.notes}`);
     log(`   Created: ${new Date(item.createdAt).toLocaleDateString()}`);
   });
@@ -330,6 +357,172 @@ function deleteEditorialItem() {
   });
 }
 
+// New function: Create blog post from editorial item
+function createPostFromEditorial() {
+  const items = loadEditorialItems();
+  
+  if (items.length === 0) {
+    logInfo('No editorial items found');
+    return;
+  }
+  
+  log('\n✍️  Create Blog Post from Editorial Item', 'cyan');
+  
+  // Filter items that could become posts
+  const eligibleItems = items.filter(item => 
+    item.status === 'idea' || 
+    item.status === 'outline' || 
+    item.status === 'draft' ||
+    item.status === 'ready'
+  );
+  
+  if (eligibleItems.length === 0) {
+    logInfo('No editorial items ready for blog post creation');
+    return;
+  }
+  
+  log('\n📋 Eligible Editorial Items:');
+  eligibleItems.forEach((item, index) => {
+    log(`\n${index + 1}. ${colorize(item.title, 'bright')}`);
+    log(`   Status: ${item.status}`);
+    log(`   Category: ${item.category || 'None'}`);
+    if (item.template) log(`   Template: ${item.template}`);
+    if (item.notes) log(`   Notes: ${item.notes}`);
+  });
+  
+  rl.question('\nSelect item number to convert to blog post: ', (num) => {
+    const index = parseInt(num) - 1;
+    
+    if (index < 0 || index >= eligibleItems.length) {
+      logError('Invalid item number');
+      rl.close();
+      return;
+    }
+    
+    const item = eligibleItems[index];
+    logInfo(`Selected: ${item.title}`);
+    
+    // Use the item's template if available, otherwise ask user to select
+    let selectedTemplate = item.template;
+    
+    if (!selectedTemplate) {
+      const templates = getAvailableTemplates();
+      if (templates.length > 0) {
+        log('\n📝 Available Templates:');
+        templates.forEach((template, index) => {
+          log(`   ${index + 1}. ${template}`);
+        });
+        
+        rl.question('\nSelect template number (or press Enter for basic post): ', (templateNum) => {
+          if (templateNum.trim() && !isNaN(templateNum)) {
+            const templateIndex = parseInt(templateNum) - 1;
+            if (templateIndex >= 0 && templateIndex < templates.length) {
+              selectedTemplate = templates[templateIndex];
+              logInfo(`Selected template: ${selectedTemplate}`);
+            }
+          }
+          
+          continuePostCreationFromEditorial(item, selectedTemplate);
+        });
+      } else {
+        continuePostCreationFromEditorial(item, null);
+      }
+    } else {
+      continuePostCreationFromEditorial(item, selectedTemplate);
+    }
+  });
+}
+
+function continuePostCreationFromEditorial(item, templateName) {
+  log('\n📝 Blog Post Details', 'cyan');
+  
+  // Pre-fill with editorial item data
+  const defaultTitle = item.title;
+  const defaultExcerpt = item.notes || '';
+  const defaultCategory = item.category || '';
+  
+  rl.question(`Title (default: ${defaultTitle}): `, (title) => {
+    const finalTitle = title.trim() || defaultTitle;
+    
+    rl.question(`Excerpt (default: ${defaultExcerpt}): `, (excerpt) => {
+      const finalExcerpt = excerpt.trim() || defaultExcerpt;
+      
+      rl.question('Date (YYYY-MM-DD, default: today): ', (date) => {
+        const postDate = date.trim() || new Date().toISOString().split('T')[0];
+        
+        rl.question('Author (default: Matt): ', (author) => {
+          const postAuthor = author.trim() || 'Matt';
+          
+          rl.question('Published? (y/N): ', (published) => {
+            const isPublished = published.toLowerCase() === 'y' || published.toLowerCase() === 'yes';
+            
+            const slug = finalTitle.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '');
+            
+            let postContent;
+            
+            if (templateName) {
+              // Use selected template
+              const templateContent = loadTemplate(templateName);
+              if (templateContent) {
+                // Replace template placeholders with editorial item data
+                postContent = templateContent
+                  .replace(/\[Your Post Title Here\]/g, finalTitle)
+                  .replace(/\[Brief Description\]/g, finalExcerpt)
+                  .replace(/\[YYYY-MM-DD\]/g, postDate)
+                  .replace(/\[Matt\]/g, postAuthor)
+                  .replace(/published: false/g, `published: ${isPublished}`)
+                  .replace(/\[Category\]/g, defaultCategory)
+                  .replace(/\[tag1\]/g, defaultCategory.toLowerCase())
+                  .replace(/\[tag2\]/g, '')
+                  .replace(/\[tag3\]/g, '');
+              } else {
+                postContent = createBasicPost(finalTitle, finalExcerpt, postDate, postAuthor, isPublished);
+              }
+            } else {
+              // Create basic post
+              postContent = createBasicPost(finalTitle, finalExcerpt, postDate, postAuthor, isPublished);
+            }
+            
+            ensurePostsDirectory();
+            const filePath = path.join(POSTS_DIR, `${slug}.md`);
+            
+            if (fs.existsSync(filePath)) {
+              logError(`Post with slug "${slug}" already exists`);
+              rl.close();
+              return;
+            }
+            
+            fs.writeFileSync(filePath, postContent);
+            logSuccess(`Created blog post: ${filePath}`);
+            
+            if (templateName) {
+              logInfo(`Used template: ${templateName}`);
+            }
+            
+            // Update editorial item status to 'published' if the post is published
+            if (isPublished) {
+              const items = loadEditorialItems();
+              const itemIndex = items.findIndex(i => i.id === item.id);
+              if (itemIndex !== -1) {
+                items[itemIndex].status = 'published';
+                items[itemIndex].updatedAt = new Date().toISOString();
+                saveEditorialItems(items);
+                logSuccess(`Updated editorial item status to 'published'`);
+              }
+            }
+            
+            logInfo(`Blog post created from editorial item: ${item.title}`);
+            
+            rl.close();
+          });
+        });
+      });
+    });
+  });
+}
+
 function showStats() {
   const items = loadEditorialItems();
   const posts = getPosts();
@@ -340,10 +533,14 @@ function showStats() {
   // Editorial stats
   const statusCounts = {};
   const priorityCounts = {};
+  const templateCounts = {};
   
   items.forEach(item => {
     statusCounts[item.status] = (statusCounts[item.status] || 0) + 1;
     priorityCounts[item.priority] = (priorityCounts[item.priority] || 0) + 1;
+    if (item.template) {
+      templateCounts[item.template] = (templateCounts[item.template] || 0) + 1;
+    }
   });
   
   log(`\n📝 Editorial Items: ${items.length}`);
@@ -355,6 +552,13 @@ function showStats() {
   Object.entries(priorityCounts).forEach(([priority, count]) => {
     log(`   ${priority}: ${count}`);
   });
+  
+  if (Object.keys(templateCounts).length > 0) {
+    log(`\n📋 Template Usage:`);
+    Object.entries(templateCounts).forEach(([template, count]) => {
+      log(`   ${template}: ${count}`);
+    });
+  }
   
   // Blog stats
   const publishedPosts = posts.filter(post => post.published);
@@ -552,7 +756,7 @@ function togglePostStatus() {
       fs.writeFileSync(filePath, newContent);
       
       const status = newPublished ? 'published' : 'draft';
-      logSuccess(`Updated ${post.title} to ${status}`);
+      logSuccess(`Updated ${post.title} status to ${status}`);
       
     } catch (error) {
       logError(`Failed to update post: ${error.message}`);
@@ -571,6 +775,7 @@ function showHelp() {
   log('  list         - List all editorial items');
   log('  update       - Update item status');
   log('  delete       - Delete editorial item');
+  log('  convert      - Create blog post from editorial item');
   
   log('\n📚 Blog Post Management:');
   log('  create       - Create new blog post');
@@ -591,6 +796,7 @@ function showHelp() {
   log('  - All editorial data is saved locally');
   log('  - Run without arguments for interactive mode');
   log('  - Use templates for consistent post structure');
+  log('  - Convert editorial items to blog posts seamlessly');
 }
 
 function showMainMenu() {
@@ -641,9 +847,10 @@ function showEditorialMenu() {
   log('2. List all items');
   log('3. Update status');
   log('4. Delete item');
-  log('5. Back to main menu');
+  log('5. Convert to blog post');
+  log('6. Back to main menu');
   
-  rl.question('\nSelect an option (1-5): ', (choice) => {
+  rl.question('\nSelect an option (1-6): ', (choice) => {
     switch (choice.trim()) {
       case '1':
         addEditorialItem();
@@ -659,6 +866,9 @@ function showEditorialMenu() {
         deleteEditorialItem();
         break;
       case '5':
+        createPostFromEditorial();
+        break;
+      case '6':
         showMainMenu();
         break;
       default:
@@ -724,6 +934,9 @@ function handleCommandLineArgs() {
     case 'delete':
       deleteEditorialItem();
       break;
+    case 'convert':
+      createPostFromEditorial();
+      break;
     case 'create':
       createPost();
       break;
@@ -774,6 +987,7 @@ module.exports = {
   listEditorialItems,
   updateItemStatus,
   deleteEditorialItem,
+  createPostFromEditorial,
   createPost,
   listPosts,
   togglePostStatus,
