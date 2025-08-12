@@ -9,6 +9,7 @@ const readline = require('readline');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const POSTS_DIR = path.join(PROJECT_ROOT, 'posts');
 const EDITORIAL_FILE = path.join(PROJECT_ROOT, '.editorial.json');
+const TEMPLATES_DIR = path.join(PROJECT_ROOT, 'templates');
 
 // Colors for terminal output
 const colors = {
@@ -120,6 +121,61 @@ function getPosts() {
       };
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+// Template functions
+function getAvailableTemplates() {
+  if (!fs.existsSync(TEMPLATES_DIR)) {
+    return [];
+  }
+  
+  const files = fs.readdirSync(TEMPLATES_DIR);
+  return files
+    .filter(file => file.endsWith('.md') && file !== 'README.md')
+    .map(file => file.replace('.md', ''));
+}
+
+function loadTemplate(templateName) {
+  const templatePath = path.join(TEMPLATES_DIR, `${templateName}.md`);
+  
+  if (!fs.existsSync(templatePath)) {
+    return null;
+  }
+  
+  try {
+    const content = fs.readFileSync(templatePath, 'utf8');
+    return content;
+  } catch (error) {
+    logError(`Failed to load template: ${templateName}`);
+    return null;
+  }
+}
+
+function listTemplates() {
+  const templates = getAvailableTemplates();
+  
+  if (templates.length === 0) {
+    logInfo('No templates found');
+    return;
+  }
+  
+  log('\n📝 Available Templates', 'cyan');
+  log('─'.repeat(50), 'cyan');
+  
+  templates.forEach((template, index) => {
+    log(`\n${index + 1}. ${colorize(template, 'bright')}`);
+    
+    // Load template to show description
+    const templateContent = loadTemplate(template);
+    if (templateContent) {
+      const matterResult = matter(templateContent);
+      if (matterResult.data.excerpt) {
+        log(`   ${matterResult.data.excerpt}`);
+      }
+    }
+  });
+  
+  log('\n💡 Use: mattblog create --template <template-name>');
 }
 
 // Editorial management functions
@@ -319,6 +375,33 @@ function showStats() {
 function createPost() {
   log('\n✍️  Creating New Blog Post', 'cyan');
   
+  // Check if templates are available
+  const templates = getAvailableTemplates();
+  let selectedTemplate = null;
+  
+  if (templates.length > 0) {
+    log('\n📝 Available Templates:');
+    templates.forEach((template, index) => {
+      log(`   ${index + 1}. ${template}`);
+    });
+    
+    rl.question('\nSelect template number (or press Enter for basic post): ', (templateNum) => {
+      if (templateNum.trim() && !isNaN(templateNum)) {
+        const index = parseInt(templateNum) - 1;
+        if (index >= 0 && index < templates.length) {
+          selectedTemplate = templates[index];
+          logInfo(`Using template: ${selectedTemplate}`);
+        }
+      }
+      
+      continuePostCreation(selectedTemplate);
+    });
+  } else {
+    continuePostCreation(null);
+  }
+}
+
+function continuePostCreation(templateName) {
   rl.question('Title: ', (title) => {
     if (!title.trim()) {
       logError('Title is required');
@@ -338,16 +421,26 @@ function createPost() {
             const postAuthor = author.trim() || 'Matt';
             const isPublished = published.toLowerCase() === 'y' || published.toLowerCase() === 'yes';
             
-            const frontMatter = `---
-title: "${title.trim()}"
-excerpt: "${excerpt.trim()}"
-date: "${postDate}"
-author: "${postAuthor}"
-published: ${isPublished}
----
-
-Write your content here...
-`;
+            let postContent;
+            
+            if (templateName) {
+              // Use selected template
+              const templateContent = loadTemplate(templateName);
+              if (templateContent) {
+                // Replace template placeholders with user input
+                postContent = templateContent
+                  .replace(/\[Your Post Title Here\]/g, title.trim())
+                  .replace(/\[Brief Description\]/g, excerpt.trim())
+                  .replace(/\[YYYY-MM-DD\]/g, postDate)
+                  .replace(/\[Matt\]/g, postAuthor)
+                  .replace(/published: false/g, `published: ${isPublished}`);
+              } else {
+                postContent = createBasicPost(title.trim(), excerpt.trim(), postDate, postAuthor, isPublished);
+              }
+            } else {
+              // Create basic post
+              postContent = createBasicPost(title.trim(), excerpt.trim(), postDate, postAuthor, isPublished);
+            }
             
             ensurePostsDirectory();
             const filePath = path.join(POSTS_DIR, `${slug}.md`);
@@ -358,8 +451,12 @@ Write your content here...
               return;
             }
             
-            fs.writeFileSync(filePath, frontMatter);
+            fs.writeFileSync(filePath, postContent);
             logSuccess(`Created post: ${filePath}`);
+            
+            if (templateName) {
+              logInfo(`Used template: ${templateName}`);
+            }
             
             if (isPublished) {
               logInfo('Post is marked as published and will appear on the blog');
@@ -373,6 +470,31 @@ Write your content here...
       });
     });
   });
+}
+
+function createBasicPost(title, excerpt, date, author, published) {
+  return `---
+title: "${title}"
+excerpt: "${excerpt}"
+date: "${date}"
+author: "${author}"
+published: ${published}
+---
+
+# ${title}
+
+## Introduction
+
+Write your introduction here...
+
+## Main Content
+
+Your content goes here...
+
+## Conclusion
+
+Wrap up your thoughts here...
+`;
 }
 
 function listPosts() {
@@ -455,6 +577,9 @@ function showHelp() {
   log('  posts        - List all blog posts');
   log('  toggle       - Toggle post published status');
   
+  log('\n📋 Templates:');
+  log('  templates    - List available post templates');
+  
   log('\n📊 Information:');
   log('  stats        - Show content statistics');
   log('  help         - Show this help message');
@@ -465,6 +590,7 @@ function showHelp() {
   log('  - Press Ctrl+C to exit at any time');
   log('  - All editorial data is saved locally');
   log('  - Run without arguments for interactive mode');
+  log('  - Use templates for consistent post structure');
 }
 
 function showMainMenu() {
@@ -473,10 +599,11 @@ function showMainMenu() {
   log('1. Editorial Management');
   log('2. Blog Post Management');
   log('3. View Statistics');
-  log('4. Help');
-  log('5. Exit');
+  log('4. Templates');
+  log('5. Help');
+  log('6. Exit');
   
-  rl.question('\nSelect an option (1-5): ', (choice) => {
+  rl.question('\nSelect an option (1-6): ', (choice) => {
     switch (choice.trim()) {
       case '1':
         showEditorialMenu();
@@ -489,10 +616,14 @@ function showMainMenu() {
         showMainMenu();
         break;
       case '4':
-        showHelp();
+        listTemplates();
         showMainMenu();
         break;
       case '5':
+        showHelp();
+        showMainMenu();
+        break;
+      case '6':
         log('\n👋 Goodbye!', 'green');
         rl.close();
         break;
@@ -605,6 +736,9 @@ function handleCommandLineArgs() {
     case 'stats':
       showStats();
       break;
+    case 'templates':
+      listTemplates();
+      break;
     case 'help':
       showHelp();
       break;
@@ -643,5 +777,8 @@ module.exports = {
   createPost,
   listPosts,
   togglePostStatus,
-  showStats
+  showStats,
+  listTemplates,
+  getAvailableTemplates,
+  loadTemplate
 };
