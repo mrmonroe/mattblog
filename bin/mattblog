@@ -1,0 +1,647 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const matter = require('gray-matter');
+const readline = require('readline');
+
+// Get the project root directory (where this CLI is installed)
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const POSTS_DIR = path.join(PROJECT_ROOT, 'posts');
+const EDITORIAL_FILE = path.join(PROJECT_ROOT, '.editorial.json');
+
+// Colors for terminal output
+const colors = {
+  reset: '\x1b[0m',
+  bright: '\x1b[1m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m'
+};
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+// Editorial item structure
+class EditorialItem {
+  constructor(title, category = '', targetDate = '', priority = 'medium', notes = '') {
+    this.id = Date.now().toString();
+    this.title = title;
+    this.status = 'idea';
+    this.targetDate = targetDate;
+    this.author = 'Matt';
+    this.category = category;
+    this.notes = notes;
+    this.priority = priority;
+    this.createdAt = new Date().toISOString();
+    this.updatedAt = new Date().toISOString();
+  }
+}
+
+// Utility functions
+function colorize(text, color) {
+  return `${colors[color]}${text}${colors.reset}`;
+}
+
+function log(message, color = 'white') {
+  console.log(colorize(message, color));
+}
+
+function logError(message) {
+  console.error(colorize(`❌ ${message}`, 'red'));
+}
+
+function logSuccess(message) {
+  console.log(colorize(`✅ ${message}`, 'green'));
+}
+
+function logInfo(message) {
+  console.log(colorize(`ℹ️  ${message}`, 'blue'));
+}
+
+function logWarning(message) {
+  console.log(colorize(`⚠️  ${message}`, 'yellow'));
+}
+
+// File operations
+function ensurePostsDirectory() {
+  if (!fs.existsSync(POSTS_DIR)) {
+    fs.mkdirSync(POSTS_DIR, { recursive: true });
+  }
+}
+
+function loadEditorialItems() {
+  if (fs.existsSync(EDITORIAL_FILE)) {
+    try {
+      const data = fs.readFileSync(EDITORIAL_FILE, 'utf8');
+      return JSON.parse(data);
+    } catch (error) {
+      logError('Failed to load editorial items');
+      return [];
+    }
+  }
+  return [];
+}
+
+function saveEditorialItems(items) {
+  try {
+    fs.writeFileSync(EDITORIAL_FILE, JSON.stringify(items, null, 2));
+    return true;
+  } catch (error) {
+    logError('Failed to save editorial items');
+    return false;
+  }
+}
+
+function getPosts() {
+  ensurePostsDirectory();
+  const files = fs.readdirSync(POSTS_DIR);
+  return files
+    .filter(file => file.endsWith('.md'))
+    .map(file => {
+      const slug = file.replace(/\.md$/, '');
+      const fullPath = path.join(POSTS_DIR, file);
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const matterResult = matter(content);
+      
+      return {
+        slug,
+        title: matterResult.data.title || 'Untitled',
+        excerpt: matterResult.data.excerpt || '',
+        date: matterResult.data.date || new Date().toISOString().split('T')[0],
+        author: matterResult.data.author || 'Unknown',
+        published: matterResult.data.published !== false
+      };
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+// Editorial management functions
+function addEditorialItem() {
+  log('\n📝 Adding New Editorial Item', 'cyan');
+  
+  rl.question('Title: ', (title) => {
+    if (!title.trim()) {
+      logError('Title is required');
+      rl.close();
+      return;
+    }
+    
+    rl.question('Category (optional): ', (category) => {
+      rl.question('Target Date (YYYY-MM-DD, optional): ', (targetDate) => {
+        rl.question('Priority (low/medium/high, default: medium): ', (priority) => {
+          rl.question('Notes (optional): ', (notes) => {
+            const item = new EditorialItem(
+              title.trim(),
+              category.trim(),
+              targetDate.trim() || '',
+              priority.trim() || 'medium',
+              notes.trim()
+            );
+            
+            const items = loadEditorialItems();
+            items.push(item);
+            
+            if (saveEditorialItems(items)) {
+              logSuccess(`Added: ${item.title}`);
+            }
+            
+            rl.close();
+          });
+        });
+      });
+    });
+  });
+}
+
+function listEditorialItems() {
+  const items = loadEditorialItems();
+  
+  if (items.length === 0) {
+    logInfo('No editorial items found');
+    return;
+  }
+  
+  log('\n📋 Editorial Items', 'cyan');
+  log('─'.repeat(80), 'cyan');
+  
+  items.forEach((item, index) => {
+    const statusColors = {
+      idea: 'blue',
+      outline: 'yellow',
+      draft: 'magenta',
+      review: 'cyan',
+      ready: 'green',
+      published: 'white'
+    };
+    
+    const priorityColors = {
+      low: 'gray',
+      medium: 'blue',
+      high: 'red'
+    };
+    
+    log(`\n${index + 1}. ${colorize(item.title, 'bright')}`);
+    log(`   Status: ${colorize(item.status, statusColors[item.status])}`);
+    log(`   Priority: ${colorize(item.priority, priorityColors[item.priority])}`);
+    if (item.category) log(`   Category: ${item.category}`);
+    if (item.targetDate) log(`   Target: ${item.targetDate}`);
+    if (item.notes) log(`   Notes: ${item.notes}`);
+    log(`   Created: ${new Date(item.createdAt).toLocaleDateString()}`);
+  });
+}
+
+function updateItemStatus() {
+  const items = loadEditorialItems();
+  
+  if (items.length === 0) {
+    logInfo('No editorial items to update');
+    return;
+  }
+  
+  listEditorialItems();
+  
+  rl.question('\nEnter item number to update: ', (num) => {
+    const index = parseInt(num) - 1;
+    
+    if (index < 0 || index >= items.length) {
+      logError('Invalid item number');
+      rl.close();
+      return;
+    }
+    
+    const item = items[index];
+    const statuses = ['idea', 'outline', 'draft', 'review', 'ready', 'published'];
+    
+    log(`\nCurrent status: ${item.status}`);
+    log('Available statuses: ' + statuses.join(', '));
+    
+    rl.question('New status: ', (status) => {
+      if (statuses.includes(status.toLowerCase())) {
+        item.status = status.toLowerCase();
+        item.updatedAt = new Date().toISOString();
+        
+        if (saveEditorialItems(items)) {
+          logSuccess(`Updated ${item.title} status to ${item.status}`);
+        }
+      } else {
+        logError('Invalid status');
+      }
+      rl.close();
+    });
+  });
+}
+
+function deleteEditorialItem() {
+  const items = loadEditorialItems();
+  
+  if (items.length === 0) {
+    logInfo('No editorial items to delete');
+    return;
+  }
+  
+  listEditorialItems();
+  
+  rl.question('\nEnter item number to delete: ', (num) => {
+    const index = parseInt(num) - 1;
+    
+    if (index < 0 || index >= items.length) {
+      logError('Invalid item number');
+      rl.close();
+      return;
+    }
+    
+    const item = items[index];
+    
+    rl.question(`Are you sure you want to delete "${item.title}"? (y/N): `, (answer) => {
+      if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+        items.splice(index, 1);
+        
+        if (saveEditorialItems(items)) {
+          logSuccess(`Deleted: ${item.title}`);
+        }
+      } else {
+        logInfo('Deletion cancelled');
+      }
+      rl.close();
+    });
+  });
+}
+
+function showStats() {
+  const items = loadEditorialItems();
+  const posts = getPosts();
+  
+  log('\n📊 Content Statistics', 'cyan');
+  log('─'.repeat(40), 'cyan');
+  
+  // Editorial stats
+  const statusCounts = {};
+  const priorityCounts = {};
+  
+  items.forEach(item => {
+    statusCounts[item.status] = (statusCounts[item.status] || 0) + 1;
+    priorityCounts[item.priority] = (priorityCounts[item.priority] || 0) + 1;
+  });
+  
+  log(`\n📝 Editorial Items: ${items.length}`);
+  Object.entries(statusCounts).forEach(([status, count]) => {
+    log(`   ${status}: ${count}`);
+  });
+  
+  log(`\n🎯 Priority Breakdown:`);
+  Object.entries(priorityCounts).forEach(([priority, count]) => {
+    log(`   ${priority}: ${count}`);
+  });
+  
+  // Blog stats
+  const publishedPosts = posts.filter(post => post.published);
+  const draftPosts = posts.filter(post => !post.published);
+  
+  log(`\n📚 Blog Posts: ${posts.length}`);
+  log(`   Published: ${publishedPosts.length}`);
+  log(`   Drafts: ${draftPosts.length}`);
+  
+  if (publishedPosts.length > 0) {
+    log(`\n📅 Recent Posts:`);
+    publishedPosts.slice(0, 5).forEach(post => {
+      log(`   ${post.title} (${post.date})`);
+    });
+  }
+}
+
+function createPost() {
+  log('\n✍️  Creating New Blog Post', 'cyan');
+  
+  rl.question('Title: ', (title) => {
+    if (!title.trim()) {
+      logError('Title is required');
+      rl.close();
+      return;
+    }
+    
+    rl.question('Excerpt (optional): ', (excerpt) => {
+      rl.question('Date (YYYY-MM-DD, default: today): ', (date) => {
+        rl.question('Author (default: Matt): ', (author) => {
+          rl.question('Published? (y/N): ', (published) => {
+            const slug = title.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '');
+            
+            const postDate = date.trim() || new Date().toISOString().split('T')[0];
+            const postAuthor = author.trim() || 'Matt';
+            const isPublished = published.toLowerCase() === 'y' || published.toLowerCase() === 'yes';
+            
+            const frontMatter = `---
+title: "${title.trim()}"
+excerpt: "${excerpt.trim()}"
+date: "${postDate}"
+author: "${postAuthor}"
+published: ${isPublished}
+---
+
+Write your content here...
+`;
+            
+            ensurePostsDirectory();
+            const filePath = path.join(POSTS_DIR, `${slug}.md`);
+            
+            if (fs.existsSync(filePath)) {
+              logError(`Post with slug "${slug}" already exists`);
+              rl.close();
+              return;
+            }
+            
+            fs.writeFileSync(filePath, frontMatter);
+            logSuccess(`Created post: ${filePath}`);
+            
+            if (isPublished) {
+              logInfo('Post is marked as published and will appear on the blog');
+            } else {
+              logInfo('Post is marked as draft and will not appear on the blog');
+            }
+            
+            rl.close();
+          });
+        });
+      });
+    });
+  });
+}
+
+function listPosts() {
+  const posts = getPosts();
+  
+  if (posts.length === 0) {
+    logInfo('No blog posts found');
+    return;
+  }
+  
+  log('\n📚 Blog Posts', 'cyan');
+  log('─'.repeat(80), 'cyan');
+  
+  posts.forEach((post, index) => {
+    const status = post.published ? colorize('Published', 'green') : colorize('Draft', 'yellow');
+    log(`\n${index + 1}. ${colorize(post.title, 'bright')}`);
+    log(`   Status: ${status}`);
+    log(`   Slug: ${post.slug}`);
+    log(`   Date: ${post.date}`);
+    log(`   Author: ${post.author}`);
+    if (post.excerpt) log(`   Excerpt: ${post.excerpt}`);
+  });
+}
+
+function togglePostStatus() {
+  const posts = getPosts();
+  
+  if (posts.length === 0) {
+    logInfo('No blog posts to update');
+    return;
+  }
+  
+  listPosts();
+  
+  rl.question('\nEnter post number to toggle status: ', (num) => {
+    const index = parseInt(num) - 1;
+    
+    if (index < 0 || index >= posts.length) {
+      logError('Invalid post number');
+      rl.close();
+      return;
+    }
+    
+    const post = posts[index];
+    const filePath = path.join(POSTS_DIR, `${post.slug}.md`);
+    
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const matterResult = matter(content);
+      
+      const newPublished = !matterResult.data.published;
+      matterResult.data.published = newPublished;
+      
+      const newContent = matter.stringify(matterResult.content, matterResult.data);
+      fs.writeFileSync(filePath, newContent);
+      
+      const status = newPublished ? 'published' : 'draft';
+      logSuccess(`Updated ${post.title} to ${status}`);
+      
+    } catch (error) {
+      logError(`Failed to update post: ${error.message}`);
+    }
+    
+    rl.close();
+  });
+}
+
+function showHelp() {
+  log('\n🚀 Matt\'s Blog Content Manager', 'cyan');
+  log('─'.repeat(50), 'cyan');
+  
+  log('\n📝 Editorial Management:');
+  log('  add          - Add new editorial item');
+  log('  list         - List all editorial items');
+  log('  update       - Update item status');
+  log('  delete       - Delete editorial item');
+  
+  log('\n📚 Blog Post Management:');
+  log('  create       - Create new blog post');
+  log('  posts        - List all blog posts');
+  log('  toggle       - Toggle post published status');
+  
+  log('\n📊 Information:');
+  log('  stats        - Show content statistics');
+  log('  help         - Show this help message');
+  log('  exit         - Exit the application');
+  
+  log('\n💡 Tips:');
+  log('  - Use arrow keys to navigate menus');
+  log('  - Press Ctrl+C to exit at any time');
+  log('  - All editorial data is saved locally');
+  log('  - Run without arguments for interactive mode');
+}
+
+function showMainMenu() {
+  log('\n🎯 Main Menu', 'cyan');
+  log('─'.repeat(30), 'cyan');
+  log('1. Editorial Management');
+  log('2. Blog Post Management');
+  log('3. View Statistics');
+  log('4. Help');
+  log('5. Exit');
+  
+  rl.question('\nSelect an option (1-5): ', (choice) => {
+    switch (choice.trim()) {
+      case '1':
+        showEditorialMenu();
+        break;
+      case '2':
+        showPostMenu();
+        break;
+      case '3':
+        showStats();
+        showMainMenu();
+        break;
+      case '4':
+        showHelp();
+        showMainMenu();
+        break;
+      case '5':
+        log('\n👋 Goodbye!', 'green');
+        rl.close();
+        break;
+      default:
+        logError('Invalid option');
+        showMainMenu();
+    }
+  });
+}
+
+function showEditorialMenu() {
+  log('\n📝 Editorial Management', 'cyan');
+  log('─'.repeat(30), 'cyan');
+  log('1. Add new item');
+  log('2. List all items');
+  log('3. Update status');
+  log('4. Delete item');
+  log('5. Back to main menu');
+  
+  rl.question('\nSelect an option (1-5): ', (choice) => {
+    switch (choice.trim()) {
+      case '1':
+        addEditorialItem();
+        break;
+      case '2':
+        listEditorialItems();
+        showEditorialMenu();
+        break;
+      case '3':
+        updateItemStatus();
+        break;
+      case '4':
+        deleteEditorialItem();
+        break;
+      case '5':
+        showMainMenu();
+        break;
+      default:
+        logError('Invalid option');
+        showEditorialMenu();
+    }
+  });
+}
+
+function showPostMenu() {
+  log('\n📚 Blog Post Management', 'cyan');
+  log('─'.repeat(30), 'cyan');
+  log('1. Create new post');
+  log('2. List all posts');
+  log('3. Toggle published status');
+  log('4. Back to main menu');
+  
+  rl.question('\nSelect an option (1-4): ', (choice) => {
+    switch (choice.trim()) {
+      case '1':
+        createPost();
+        break;
+      case '2':
+        listPosts();
+        showPostMenu();
+        break;
+      case '3':
+        togglePostStatus();
+        break;
+      case '4':
+        showMainMenu();
+        break;
+      default:
+        logError('Invalid option');
+        showPostMenu();
+    }
+  });
+}
+
+// Command line argument handling
+function handleCommandLineArgs() {
+  const args = process.argv.slice(2);
+  
+  if (args.length === 0) {
+    // Interactive mode
+    log('🚀 Welcome to Matt\'s Blog Content Manager!', 'green');
+    showMainMenu();
+    return;
+  }
+  
+  const command = args[0].toLowerCase();
+  
+  switch (command) {
+    case 'add':
+      addEditorialItem();
+      break;
+    case 'list':
+      listEditorialItems();
+      break;
+    case 'update':
+      updateItemStatus();
+      break;
+    case 'delete':
+      deleteEditorialItem();
+      break;
+    case 'create':
+      createPost();
+      break;
+    case 'posts':
+      listPosts();
+      break;
+    case 'toggle':
+      togglePostStatus();
+      break;
+    case 'stats':
+      showStats();
+      break;
+    case 'help':
+      showHelp();
+      break;
+    default:
+      logError(`Unknown command: ${command}`);
+      logInfo('Use "help" to see available commands');
+      process.exit(1);
+  }
+}
+
+// Error handling
+process.on('SIGINT', () => {
+  log('\n\n👋 Goodbye!', 'green');
+  process.exit(0);
+});
+
+process.on('uncaughtException', (error) => {
+  logError(`Uncaught Exception: ${error.message}`);
+  process.exit(1);
+});
+
+// Main execution
+if (require.main === module) {
+  handleCommandLineArgs();
+}
+
+module.exports = {
+  EditorialItem,
+  loadEditorialItems,
+  saveEditorialItems,
+  getPosts,
+  addEditorialItem,
+  listEditorialItems,
+  updateItemStatus,
+  deleteEditorialItem,
+  createPost,
+  listPosts,
+  togglePostStatus,
+  showStats
+};
