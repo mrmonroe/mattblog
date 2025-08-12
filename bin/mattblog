@@ -4,6 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const matter = require('gray-matter');
 const readline = require('readline');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+
+const execAsync = promisify(exec);
 
 // Get the project root directory (where this CLI is installed)
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -94,6 +98,185 @@ function waitForInput(callback = null) {
       }
     }
   });
+}
+
+// Docker and deployment functions
+async function checkDocker() {
+  try {
+    await execAsync('docker --version');
+    await execAsync('docker-compose --version');
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function buildDockerImage() {
+  log('\n🐳 Building Docker Image', 'cyan');
+  
+  if (!(await checkDocker())) {
+    logError('Docker is not installed or not running');
+    return false;
+  }
+  
+  try {
+    logInfo('Building Docker image...');
+    const { stdout, stderr } = await execAsync('docker build -t mattblog .', { cwd: PROJECT_ROOT });
+    
+    if (stderr) {
+      logWarning(stderr);
+    }
+    
+    if (stdout) {
+      logInfo(stdout);
+    }
+    
+    logSuccess('Docker image built successfully!');
+    return true;
+  } catch (error) {
+    logError(`Failed to build Docker image: ${error.message}`);
+    return false;
+  }
+}
+
+async function runDockerLocal() {
+  log('\n🐳 Running Blog Locally with Docker', 'cyan');
+  
+  if (!(await checkDocker())) {
+    logError('Docker is not installed or not running');
+    return false;
+  }
+  
+  try {
+    logInfo('Starting blog with Docker Compose...');
+    const { stdout, stderr } = await execAsync('docker-compose --profile dev up -d', { cwd: PROJECT_ROOT });
+    
+    if (stderr) {
+      logWarning(stderr);
+    }
+    
+    if (stdout) {
+      logInfo(stdout);
+    }
+    
+    logSuccess('Blog is running locally with Docker!');
+    logInfo('Access your blog at: http://localhost:3000');
+    logInfo('To stop: docker-compose --profile dev down');
+    
+    return true;
+  } catch (error) {
+    logError(`Failed to run Docker: ${error.message}`);
+    return false;
+  }
+}
+
+async function deployToDigitalOcean() {
+  log('\n☁️  Deploy to Digital Ocean', 'cyan');
+  
+  // Check for deployment script
+  const deployScript = path.join(PROJECT_ROOT, 'deploy', 'do-deploy.sh');
+  if (!fs.existsSync(deployScript)) {
+    logError('Deployment script not found. Please ensure deploy/do-deploy.sh exists.');
+    return false;
+  }
+  
+  // Get deployment configuration
+  rl.question('Digital Ocean Droplet IP: ', async (dropletIP) => {
+    if (!dropletIP.trim()) {
+      logError('Droplet IP is required');
+      waitForInput(() => showMainMenu());
+      return;
+    }
+    
+    rl.question('SSH Key Path (default: ~/.ssh/id_rsa): ', async (sshKey) => {
+      const finalSSHKey = sshKey.trim() || '~/.ssh/id_rsa';
+      
+      rl.question('Docker Registry (optional, press Enter to skip): ', async (registry) => {
+        rl.question('Image Tag (default: latest): ', async (tag) => {
+          const finalTag = tag.trim() || 'latest';
+          
+          // Set environment variables
+          const envVars = {
+            DROPLET_IP: dropletIP.trim(),
+            SSH_KEY: finalSSHKey,
+            DOCKER_REGISTRY: registry.trim(),
+            IMAGE_TAG: finalTag
+          };
+          
+          logInfo('Starting deployment...');
+          logInfo(`Droplet IP: ${envVars.DROPLET_IP}`);
+          logInfo(`SSH Key: ${envVars.SSH_KEY}`);
+          if (envVars.DOCKER_REGISTRY) {
+            logInfo(`Registry: ${envVars.DOCKER_REGISTRY}`);
+          }
+          logInfo(`Tag: ${envVars.IMAGE_TAG}`);
+          
+          try {
+            // Make script executable and run it
+            await execAsync(`chmod +x ${deployScript}`);
+            
+            const envString = Object.entries(envVars)
+              .map(([key, value]) => `${key}="${value}"`)
+              .join(' ');
+            
+            const { stdout, stderr } = await execAsync(`${envString} ${deployScript}`, { 
+              cwd: PROJECT_ROOT,
+              shell: true
+            });
+            
+            if (stderr) {
+              logWarning(stderr);
+            }
+            
+            if (stdout) {
+              logInfo(stdout);
+            }
+            
+            logSuccess('Deployment completed successfully!');
+            
+          } catch (error) {
+            logError(`Deployment failed: ${error.message}`);
+          }
+          
+          waitForInput(() => showMainMenu());
+        });
+      });
+    });
+  });
+}
+
+async function showDockerStatus() {
+  log('\n🐳 Docker Status', 'cyan');
+  
+  if (!(await checkDocker())) {
+    logError('Docker is not installed or not running');
+    waitForInput(() => showMainMenu());
+    return;
+  }
+  
+  try {
+    // Check running containers
+    const { stdout: containers } = await execAsync('docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"');
+    log('\n📦 Running Containers:');
+    log(containers);
+    
+    // Check Docker images
+    const { stdout: images } = await execAsync('docker images mattblog --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"');
+    log('\n🖼️  MattBlog Images:');
+    log(images);
+    
+    // Check Docker Compose services
+    if (fs.existsSync(path.join(PROJECT_ROOT, 'docker-compose.yml'))) {
+      const { stdout: services } = await execAsync('docker-compose ps', { cwd: PROJECT_ROOT });
+      log('\n🚀 Docker Compose Services:');
+      log(services);
+    }
+    
+  } catch (error) {
+    logError(`Failed to get Docker status: ${error.message}`);
+  }
+  
+  waitForInput(() => showMainMenu());
 }
 
 // File operations
@@ -820,6 +1003,12 @@ function showHelp() {
   log('  posts        - List all blog posts');
   log('  toggle       - Toggle post published status');
   
+  log('\n🐳 Docker & Deployment:');
+  log('  docker-build - Build Docker image');
+  log('  docker-run   - Run blog locally with Docker');
+  log('  docker-status- Show Docker status');
+  log('  deploy       - Deploy to Digital Ocean');
+  
   log('\n📋 Templates:');
   log('  templates    - List available post templates');
   
@@ -836,7 +1025,8 @@ function showHelp() {
   log('  - Use templates for consistent post structure');
   log('  - Convert editorial items to blog posts seamlessly');
   log('  - After each command, press any key to continue');
-  log('  - Use Q to quit or L to list commands');
+  log('  - Use Q to quit or L for command list');
+  log('  - Docker commands require Docker to be installed');
   
   waitForInput(() => showMainMenu());
 }
@@ -848,10 +1038,11 @@ function showMainMenu() {
   log('2. Blog Post Management');
   log('3. View Statistics');
   log('4. Templates');
-  log('5. Help');
-  log('6. Exit');
+  log('5. Docker & Deployment');
+  log('6. Help');
+  log('7. Exit');
   
-  rl.question('\nSelect an option (1-6): ', (choice) => {
+  rl.question('\nSelect an option (1-7): ', (choice) => {
     switch (choice.trim()) {
       case '1':
         showEditorialMenu();
@@ -867,15 +1058,51 @@ function showMainMenu() {
         waitForInput(() => showMainMenu());
         break;
       case '5':
-        showHelp();
+        showDockerMenu();
         break;
       case '6':
+        showHelp();
+        break;
+      case '7':
         log('\n👋 Goodbye!', 'green');
         rl.close();
         break;
       default:
         logError('Invalid option');
         showMainMenu();
+    }
+  });
+}
+
+function showDockerMenu() {
+  log('\n🐳 Docker & Deployment', 'cyan');
+  log('─'.repeat(30), 'cyan');
+  log('1. Build Docker Image');
+  log('2. Run Locally with Docker');
+  log('3. Show Docker Status');
+  log('4. Deploy to Digital Ocean');
+  log('5. Back to main menu');
+  
+  rl.question('\nSelect an option (1-5): ', (choice) => {
+    switch (choice.trim()) {
+      case '1':
+        buildDockerImage().then(() => waitForInput(() => showDockerMenu()));
+        break;
+      case '2':
+        runDockerLocal().then(() => waitForInput(() => showDockerMenu()));
+        break;
+      case '3':
+        showDockerStatus();
+        break;
+      case '4':
+        deployToDigitalOcean();
+        break;
+      case '5':
+        showMainMenu();
+        break;
+      default:
+        logError('Invalid option');
+        showDockerMenu();
     }
   });
 }
@@ -991,6 +1218,18 @@ function handleCommandLineArgs() {
       listTemplates();
       waitForInput(() => process.exit(0));
       break;
+    case 'docker-build':
+      buildDockerImage().then(() => process.exit(0));
+      break;
+    case 'docker-run':
+      runDockerLocal().then(() => process.exit(0));
+      break;
+    case 'docker-status':
+      showDockerStatus();
+      break;
+    case 'deploy':
+      deployToDigitalOcean();
+      break;
     case 'help':
       showHelp();
       break;
@@ -1033,5 +1272,9 @@ module.exports = {
   showStats,
   listTemplates,
   getAvailableTemplates,
-  loadTemplate
+  loadTemplate,
+  buildDockerImage,
+  runDockerLocal,
+  showDockerStatus,
+  deployToDigitalOcean
 };
