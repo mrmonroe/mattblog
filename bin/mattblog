@@ -171,7 +171,7 @@ async function runDockerLocal() {
 }
 
 async function deployToDigitalOcean() {
-  log('\n☁️  Deploy to Digital Ocean', 'cyan');
+  log('\n☁️  Deploy to Digital Ocean (Automated)', 'cyan');
   
   // Check for deployment script
   const deployScript = path.join(PROJECT_ROOT, 'deploy', 'do-deploy.sh');
@@ -180,65 +180,136 @@ async function deployToDigitalOcean() {
     return false;
   }
   
+  // Check if doctl is available
+  try {
+    await execAsync('doctl version');
+    logSuccess('doctl is available');
+  } catch (error) {
+    logError('doctl is not installed or not in PATH');
+    logInfo('Please install doctl first:');
+    logInfo('  macOS: brew install doctl');
+    logInfo('  Linux: https://docs.digitalocean.com/reference/doctl/how-to/install/');
+    logInfo('  Then run: doctl auth init');
+    waitForInput(() => showMainMenu());
+    return;
+  }
+  
+  // Check if doctl is authenticated
+  try {
+    await execAsync('doctl account get');
+    logSuccess('doctl is authenticated');
+  } catch (error) {
+    logError('doctl is not authenticated');
+    logInfo('Please run: doctl auth init');
+    waitForInput(() => showMainMenu());
+    return;
+  }
+  
+  log('\n🚀 Automated Deployment Configuration', 'cyan');
+  
   // Get deployment configuration
-  rl.question('Digital Ocean Droplet IP: ', async (dropletIP) => {
-    if (!dropletIP.trim()) {
-      logError('Droplet IP is required');
-      waitForInput(() => showMainMenu());
-      return;
-    }
+  rl.question('Droplet Name (default: mattblog-prod): ', async (dropletName) => {
+    const finalDropletName = dropletName.trim() || 'mattblog-prod';
     
-    rl.question('SSH Key Path (default: ~/.ssh/id_rsa): ', async (sshKey) => {
-      const finalSSHKey = sshKey.trim() || '~/.ssh/id_rsa';
+    rl.question('Droplet Size (default: s-1vcpu-1gb): ', async (dropletSize) => {
+      const finalDropletSize = dropletSize.trim() || 's-1vcpu-1gb';
       
-      rl.question('Docker Registry (optional, press Enter to skip): ', async (registry) => {
-        rl.question('Image Tag (default: latest): ', async (tag) => {
-          const finalTag = tag.trim() || 'latest';
+      rl.question('Region (default: nyc1): ', async (region) => {
+        const finalRegion = region.trim() || 'nyc1';
+        
+        rl.question('Domain (optional, press Enter to skip): ', async (domain) => {
+          const finalDomain = domain.trim();
           
-          // Set environment variables
-          const envVars = {
-            DROPLET_IP: dropletIP.trim(),
-            SSH_KEY: finalSSHKey,
-            DOCKER_REGISTRY: registry.trim(),
-            IMAGE_TAG: finalTag
-          };
-          
-          logInfo('Starting deployment...');
-          logInfo(`Droplet IP: ${envVars.DROPLET_IP}`);
-          logInfo(`SSH Key: ${envVars.SSH_KEY}`);
-          if (envVars.DOCKER_REGISTRY) {
-            logInfo(`Registry: ${envVars.DOCKER_REGISTRY}`);
-          }
-          logInfo(`Tag: ${envVars.IMAGE_TAG}`);
-          
-          try {
-            // Make script executable and run it
-            await execAsync(`chmod +x ${deployScript}`);
+          rl.question('Enable Load Balancer? (y/N): ', async (enableLB) => {
+            const finalEnableLB = enableLB.toLowerCase() === 'y' || enableLB.toLowerCase() === 'yes';
             
-            const envString = Object.entries(envVars)
-              .map(([key, value]) => `${key}="${value}"`)
-              .join(' ');
-            
-            const { stdout, stderr } = await execAsync(`${envString} ${deployScript}`, { 
-              cwd: PROJECT_ROOT,
-              shell: true
+            rl.question('Docker Registry (optional, press Enter to skip): ', async (registry) => {
+              const finalRegistry = registry.trim();
+              
+              rl.question('Image Tag (default: latest): ', async (tag) => {
+                const finalTag = tag.trim() || 'latest';
+                
+                // Set environment variables
+                const envVars = {
+                  DROPLET_NAME: finalDropletName,
+                  DROPLET_SIZE: finalDropletSize,
+                  DROPLET_REGION: finalRegion,
+                  DOMAIN: finalDomain,
+                  ENABLE_LOAD_BALANCER: finalEnableLB.toString(),
+                  DOCKER_REGISTRY: finalRegistry,
+                  IMAGE_TAG: finalTag
+                };
+                
+                log('\n📋 Deployment Configuration:', 'cyan');
+                log(`   Droplet Name: ${envVars.DROPLET_NAME}`);
+                log(`   Droplet Size: ${envVars.DROPLET_SIZE}`);
+                log(`   Region: ${envVars.DROPLET_REGION}`);
+                if (envVars.DOMAIN) {
+                  log(`   Domain: ${envVars.DOMAIN}`);
+                } else {
+                  log(`   Domain: None (IP access only)`);
+                }
+                log(`   Load Balancer: ${envVars.ENABLE_LOAD_BALANCER === 'true' ? 'Yes' : 'No'}`);
+                if (envVars.DOCKER_REGISTRY) {
+                  log(`   Registry: ${envVars.DOCKER_REGISTRY}`);
+                } else {
+                  log(`   Registry: Local build`);
+                }
+                log(`   Image Tag: ${envVars.IMAGE_TAG}`);
+                
+                rl.question('\nProceed with deployment? (y/N): ', async (confirm) => {
+                  if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
+                    logInfo('Deployment cancelled');
+                    waitForInput(() => showMainMenu());
+                    return;
+                  }
+                  
+                  logInfo('Starting automated deployment...');
+                  logInfo('This will:');
+                  logInfo('  - Create/use SSH key');
+                  logInfo('  - Create/use droplet');
+                  logInfo('  - Setup domain and DNS (if provided)');
+                  logInfo('  - Setup load balancer (if enabled)');
+                  logInfo('  - Build and deploy Docker image');
+                  logInfo('  - Configure SSL certificates');
+                  logInfo('  - Perform health checks');
+                  
+                  try {
+                    // Make script executable and run it
+                    await execAsync(`chmod +x ${deployScript}`);
+                    
+                    const envString = Object.entries(envVars)
+                      .map(([key, value]) => `${key}="${value}"`)
+                      .join(' ');
+                    
+                    logInfo('Running deployment script...');
+                    logInfo('This may take 5-10 minutes...');
+                    
+                    const { stdout, stderr } = await execAsync(`${envString} ${deployScript}`, { 
+                      cwd: PROJECT_ROOT,
+                      shell: true
+                    });
+                    
+                    if (stderr) {
+                      logWarning(stderr);
+                    }
+                    
+                    if (stdout) {
+                      logInfo(stdout);
+                    }
+                    
+                    logSuccess('Automated deployment completed successfully!');
+                    
+                  } catch (error) {
+                    logError(`Deployment failed: ${error.message}`);
+                    logInfo('Check the error messages above for troubleshooting steps');
+                  }
+                  
+                  waitForInput(() => showMainMenu());
+                });
+              });
             });
-            
-            if (stderr) {
-              logWarning(stderr);
-            }
-            
-            if (stdout) {
-              logInfo(stdout);
-            }
-            
-            logSuccess('Deployment completed successfully!');
-            
-          } catch (error) {
-            logError(`Deployment failed: ${error.message}`);
-          }
-          
-          waitForInput(() => showMainMenu());
+          });
         });
       });
     });
